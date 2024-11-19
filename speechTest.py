@@ -1,9 +1,12 @@
 from flask import Flask, render_template
 from flask_socketio import SocketIO, emit
 import azure.cognitiveservices.speech as speechsdk
+from azure.core.credentials import AzureKeyCredential
+from azure.ai.textanalytics import TextAnalyticsClient
 import threading
 import os
 import json
+import asyncio
 
 app = Flask(__name__)
 socketio = SocketIO(app)
@@ -13,9 +16,16 @@ with open("config.json", "r") as config_file:
     config = json.load(config_file)
     SPEECH_KEY = config.get("AZURE_SPEECH_KEY")
     SERVICE_REGION = config.get("AZURE_SERVICE_REGION")
+    LANGUAGE_KEY = config.get("AZURE_LANGUAGE_KEY")
 
-if not SPEECH_KEY or not SERVICE_REGION:
-    raise ValueError("Azure Speech Serviceのキーまたはリージョンが設定ファイルに存在しません。")
+if not SPEECH_KEY or not SERVICE_REGION or not LANGUAGE_KEY:
+    raise ValueError("Azure サービスのキーまたはリージョンが設定ファイルに存在しません。")
+
+# Language Clientの初期化
+text_analytics_client = TextAnalyticsClient(
+    endpoint=f"https://{SERVICE_REGION}.api.cognitive.microsoft.com/",
+    credential=AzureKeyCredential(LANGUAGE_KEY)
+)
 
 recognizer = None
 recognizing = False
@@ -77,6 +87,37 @@ def handle_stop():
     if recognizing:
         stop_recognition()
         emit('status', {'status': 'stopped'})
+
+@socketio.on('summarize_text')
+def handle_summarize(data):
+    try:
+        text = data.get('text', '')
+        if not text:
+            emit('summary_result', {'error': '要約するテキストがありません。'})
+            return
+
+        # 要約処理を実行
+        try:
+            # begin_extract_summaryを使用して要約を開始
+            poller = text_analytics_client.begin_extract_summary([text])
+            extract_summary_results = poller.result()
+
+            for result in extract_summary_results:
+                if result.kind == "ExtractiveSummarization":
+                    # 要約文を結合
+                    summary = " ".join([sentence.text for sentence in result.sentences])
+                    emit('summary_result', {'summary': summary})
+                elif result.is_error:
+                    emit('summary_result', {
+                        'error': f'要約エラー: {result.error.code} - {result.error.message}'
+                    })
+                    return
+
+        except Exception as api_error:
+            emit('summary_result', {'error': f'要約APIエラー: {str(api_error)}'})
+
+    except Exception as e:
+        emit('summary_result', {'error': f'要約処理中にエラーが発生しました: {str(e)}'})
 
 if __name__ == '__main__':
     socketio.run(app, host='0.0.0.0', port=5001, debug=True)

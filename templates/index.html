@@ -83,6 +83,31 @@
             white-space: pre-wrap;
             text-align: left;  /* テキストを左寄せに */
         }
+        #summary-button {
+            display: none;  /* 初期状態では非表示 */
+            margin: 20px auto;
+            padding: 10px 20px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        #summary-result {
+            display: none;
+            margin: 20px auto;
+            padding: 15px;
+            width: 80%;
+            background-color: #e9ecef;
+            border-radius: 5px;
+            border-left: 5px solid #007bff;
+            text-align: left;  /* 左寄せを追加 */
+        }
+        #summary-text {
+            text-align: left;  /* 左寄せを追加 */
+            white-space: pre-wrap;  /* 改行を保持 */
+            margin: 0;  /* デフォルトマージンを削除 */
+        }
     </style>
 </head>
 <body>
@@ -98,6 +123,11 @@
         <div id="final-text" class="mt-4">
             <p class="text-muted">ここに確定したテキストが表示されます...</p>
         </div>
+        <button id="summary-button" class="btn btn-primary" style="display: none;">テキストを要約</button>
+        <div id="summary-result" style="display: none;">
+            <h4 class="text-start">要約結果</h4>  <!-- 見出しも左寄せに -->
+            <p id="summary-text"></p>
+        </div>
     </div>
 
     <script>
@@ -106,6 +136,9 @@
         const interimText = document.getElementById('interim-text');
         const finalText = document.getElementById('final-text');
         const audioLevelBar = document.getElementById('audio-level-bar');
+        const summaryButton = document.getElementById('summary-button');
+        const summaryResult = document.getElementById('summary-result');
+        const summaryText = document.getElementById('summary-text');
 
         let isRecording = false;
         let audioContext;
@@ -146,7 +179,7 @@
             };
         }
 
-        // マイクの初期化処理を修正
+        // マ���クの初期化処理を修正
         async function initializeMicrophone() {
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -180,6 +213,9 @@
                 recordButton.classList.add('start');
                 interimText.textContent = "音声認識を停止しました";
                 currentText = "";
+                if (recognizedText.trim()) {
+                    summaryButton.style.display = 'inline-block';
+                }
             } else {
                 socket.emit('start_recognition');
                 isRecording = true;
@@ -190,6 +226,16 @@
                 // 新規セッション開始時にテキストをクリア
                 recognizedText = "";
                 finalText.textContent = "";
+            }
+        });
+
+        // 要約ボタンのイベントリスナー
+        summaryButton.addEventListener('click', () => {
+            if (recognizedText.trim()) {
+                socket.emit('summarize_text', { text: recognizedText });
+                summaryButton.disabled = true;
+                summaryText.textContent = '要約中...';
+                summaryResult.style.display = 'block';
             }
         });
 
@@ -216,6 +262,17 @@
                     interimText.textContent = currentText;
                 }
             }
+        });
+
+        // 要約結果受信時の処理
+        socket.on('summary_result', (data) => {
+            summaryButton.disabled = false;
+            if (data.error) {
+                summaryText.textContent = `エラー: ${data.error}`;
+            } else {
+                summaryText.textContent = data.summary;
+            }
+            summaryResult.style.display = 'block';
         });
 
         socket.on('status', (data) => {
